@@ -1641,6 +1641,7 @@ function renderMontagem() {
                 <th style="padding:8px 8px 8px 16px;width:36px"></th>
                 <th style="padding:8px 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--text-muted);text-align:left">NF</th>
                 <th style="padding:8px 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--text-muted);text-align:left">Nome Cliente</th>
+                <th style="padding:8px 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:#1d4ed8;text-align:left;white-space:nowrap">Agendamento</th>
                 <th style="padding:8px 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--text-muted);text-align:left">Município</th>
                 <th style="padding:8px 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--text-muted);text-align:left">UF</th>
                 <th style="padding:8px 4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--text-muted);text-align:right">Peso Bruto</th>
@@ -1662,7 +1663,9 @@ function renderMontagem() {
             ? '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);font-size:13px">Todas as NFs já estão em cargas.</td></tr>'
             : nfsLivres.map(n => {
                 const rTag = n.reentrega ? ' <span style="background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700">R</span>' : '';
-                const agendTag = n.agendado ? ` <span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700" title="Agendado: ${n.agendData||''} ${n.agendHora||''}">📅 ${n.agendData||''}</span>` : '';
+                const agendTag = n.agendado
+                  ? `<span style="background:#dbeafe;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;display:inline-flex;align-items:center;gap:3px" title="${n.agendHora||''}${n.agendamento?.obs ? ' — '+n.agendamento.obs : ''}">📅 ${n.agendData||''} ${n.agendHora||''}</span>`
+                  : '';
                 return `<tr class="nf-mc-row" style="border-bottom:1px solid #f8fafc;cursor:pointer;transition:background .1s"
                   data-search="${n.nf} ${(n.cliente||'').toLowerCase()} ${(n.municipio||'').toLowerCase()}"
                   onclick="this.querySelector('input').click()"
@@ -1671,8 +1674,9 @@ function renderMontagem() {
                     <input type="checkbox" class="mc-nf-checkbox" value="${n.nf}" data-romaneio="${n.romaneioId}"
                       style="width:15px;height:15px;accent-color:var(--blue);cursor:pointer" onchange="mcCalcPreview()">
                   </td>
-                  <td class="mono" style="padding:8px 4px;font-weight:700;color:var(--navy);font-size:12px;white-space:nowrap">${n.nf}${rTag}${agendTag}</td>
+                  <td class="mono" style="padding:8px 4px;font-weight:700;color:var(--navy);font-size:12px;white-space:nowrap">${n.nf}${rTag}</td>
                   <td style="padding:8px 8px 8px 4px;font-size:12px;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${n.cliente||'—'}</td>
+                  <td style="padding:8px 4px;white-space:nowrap">${agendTag || '<span style="color:#cbd5e1;font-size:11px">—</span>'}</td>
                   <td style="padding:8px 4px;font-size:12px;color:var(--slate);white-space:nowrap">${n.municipio||'—'}</td>
                   <td style="padding:8px 4px;font-size:12px;color:var(--text-muted);white-space:nowrap">${n.uf||'SP'}</td>
                   <td class="mono" style="padding:8px 4px;font-size:12px;text-align:right;white-space:nowrap">${fmtN(n.pesoBruto,1)} kg</td>
