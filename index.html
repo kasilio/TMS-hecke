@@ -500,6 +500,7 @@ function renderOcorrenciasBtn(cid, canEdit, isMaster) {
   const items = [];
   if (canEdit) items.push(`<div class="oc-item" onclick="closeOcMenu('${mid}');modalNovaDespesa('${cid}')">💰 Despesa Extra</div>`);
   if (canEdit) items.push(`<div class="oc-item" onclick="closeOcMenu('${mid}');modalReentrega('${cid}')">↩ Reentrega</div>`);
+  if (canEdit) items.push(`<div class="oc-item" onclick="closeOcMenu('${mid}');modalAgendamento('${cid}')">📅 Agendamento</div>`);
   if (isMaster) items.push(`<div class="oc-item" style="color:#dc2626" onclick="closeOcMenu('${mid}');modalRecusarNF('${cid}')">🚫 Recusar NF</div>`);
   return [
     '<div style="position:relative;display:inline-block">',
@@ -656,6 +657,118 @@ function uid() { return 'id' + Date.now() + Math.random().toString(36).slice(2,7
 function closeModal() { document.getElementById('dynamicModal').innerHTML = ''; }
 function showModal(html) { document.getElementById('dynamicModal').innerHTML = html; }
 function getMotorista(id) { return DB.motoristas.find(m=>m.id===id); }
+
+// Get the romaneio NF object by NF number
+function getRomaneioNF(nfNum) {
+  for (const rom of DB.romaneios) {
+    const nf = rom.nfs.find(n => n.nf === nfNum);
+    if (nf) return { rom, nf };
+  }
+  return null;
+}
+
+function modalAgendamentoNF(nfNum) {
+  const found = getRomaneioNF(nfNum);
+  if (!found) { alert('NF não encontrada.'); return; }
+  const { rom, nf } = found;
+  const agend = nf.agendamento || null;
+  const hoje = new Date().toISOString().split('T')[0];
+
+  showModal(`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+          <span class="modal-title">📅 Agendamento — NF ${nfNum}</span>
+          <button class="close-btn" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div style="background:#f8fafc;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px">
+            <strong>${nf.cliente || '—'}</strong><br>
+            <span style="color:var(--text-muted)">${nf.municipio || '—'}/${nf.uf || ''} · ${fmtN(nf.pesoBruto,2)} kg · ${fmt(nf.totalNota)}</span>
+          </div>
+          ${agend ? `<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:12px;color:#1d4ed8">
+            📅 Já agendado: <strong>${agend.data} às ${agend.hora}</strong>${agend.obs ? ' — ' + agend.obs : ''}
+          </div>` : ''}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+            <div>
+              <label class="form-label">Data do Agendamento *</label>
+              <input type="date" id="agnf-data" class="form-control" value="${agend?.dataISO || hoje}" min="${hoje}">
+            </div>
+            <div>
+              <label class="form-label">Horário *</label>
+              <input type="time" id="agnf-hora" class="form-control" value="${agend?.hora || '08:00'}">
+            </div>
+          </div>
+          <div>
+            <label class="form-label">Observação (opcional)</label>
+            <textarea id="agnf-obs" class="form-control" rows="2" placeholder="Ex: Doca 3, contato: João...">${agend?.obs || ''}</textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          ${agend ? `<button class="btn btn-danger btn-sm" onclick="removerAgendamentoNF(${nfNum})">🗑 Remover</button>` : ''}
+          <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+          <button class="btn btn-primary" onclick="salvarAgendamentoNF(${nfNum})">📅 Salvar</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function salvarAgendamentoNF(nfNum) {
+  const data = document.getElementById('agnf-data')?.value;
+  const hora = document.getElementById('agnf-hora')?.value;
+  const obs  = document.getElementById('agnf-obs')?.value?.trim();
+  if (!data) { alert('Informe a data.'); return; }
+  if (!hora) { alert('Informe o horário.'); return; }
+
+  const found = getRomaneioNF(nfNum);
+  if (!found) return;
+  const { nf } = found;
+
+  const dataFmt = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR');
+  nf.agendamento = { data: dataFmt, dataISO: data, hora, obs: obs || '', lancadoPor: currentUser.nome, lancadoEm: Date.now() };
+  nf.agendado    = true;
+  nf.agendData   = dataFmt;
+  nf.agendHora   = hora;
+
+  // Sync to carga NF copy if it exists
+  for (const c of DB.cargas) {
+    const nfCarga = c.nfs.find(n => n.nf === nfNum);
+    if (nfCarga) {
+      nfCarga.agendado  = true;
+      nfCarga.agendData = dataFmt;
+      nfCarga.agendHora = hora;
+      if (!c.agendamentos) c.agendamentos = [];
+      c.agendamentos = c.agendamentos.filter(a => a.nf !== nfNum);
+      c.agendamentos.push({ nf: nfNum, data: dataFmt, dataISO: data, hora, obs: obs || '', lancadoPor: currentUser.nome, lancadoEm: Date.now() });
+    }
+  }
+
+  save();
+  closeModal();
+  navigate(currentView);
+}
+
+function removerAgendamentoNF(nfNum) {
+  if (!confirm('Remover agendamento desta NF?')) return;
+  const found = getRomaneioNF(nfNum);
+  if (!found) return;
+  const { nf } = found;
+  delete nf.agendamento;
+  nf.agendado   = false;
+  nf.agendData  = null;
+  nf.agendHora  = null;
+  // Sync removal to carga
+  for (const c of DB.cargas) {
+    const nfCarga = c.nfs.find(n => n.nf === nfNum);
+    if (nfCarga) { nfCarga.agendado = false; nfCarga.agendData = null; nfCarga.agendHora = null; }
+    if (c.agendamentos) c.agendamentos = c.agendamentos.filter(a => a.nf !== nfNum);
+  }
+  save();
+  closeModal();
+  navigate(currentView);
+}
+
 function getRomaneio(id) { return DB.romaneios.find(r=>r.id===id); }
 function getCarga(id) { return DB.cargas.find(c=>c.id===id); }
 function nfsInCargas(romaneioId) {
@@ -950,6 +1063,8 @@ function renderCargaBlock(c, view, isMaster, fkgTransfGlobal) {
   // ── Header pills ──────────────────────────────────────────────
   const pctPill      = view==='custo'&&isMaster ? pctCustTot : pctDistTot;
   const pctPillClass = pctPill>10?'pct-high':pctPill>6?'pct-mid':'pct-ok';
+      const agendCount = c.nfs.filter(n=>n.agendado).length;
+      const agendPill = agendCount > 0 ? `<span class="info-pill" style="background:#dbeafe;color:#1d4ed8;font-weight:700">📅 ${agendCount} agendada${agendCount>1?'s':''}</span>` : '';
   const pillLabel    = view==='custo'&&isMaster ? 'C/F' : 'F/F';
 
   return '<div class="carga-section" style="margin-bottom:12px">' +
@@ -967,6 +1082,7 @@ function renderCargaBlock(c, view, isMaster, fkgTransfGlobal) {
         (despTotalAprov>0 ? '<span class="info-pill" style="color:var(--amber)">Desp: +'+fmt(despTotalAprov)+'</span>' : '') +
         '<span class="info-pill">Fat: ' + fmt(totFatCarga) + '</span>' +
         '<span class="info-pill ' + pctPillClass + '">' + fmtN(pctPill) + '% ' + pillLabel + '</span>' +
+        (agendPill || '') +
         '<button class="btn btn-secondary btn-sm" data-cid="' + c.id + '" onclick="modalVerCarga(this.dataset.cid)">Detalhes</button>' +
       '</div>' +
     '</div>' +
@@ -1546,6 +1662,7 @@ function renderMontagem() {
             ? '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);font-size:13px">Todas as NFs já estão em cargas.</td></tr>'
             : nfsLivres.map(n => {
                 const rTag = n.reentrega ? ' <span style="background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700">R</span>' : '';
+                const agendTag = n.agendado ? ` <span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700" title="Agendado: ${n.agendData||''} ${n.agendHora||''}">📅 ${n.agendData||''}</span>` : '';
                 return `<tr class="nf-mc-row" style="border-bottom:1px solid #f8fafc;cursor:pointer;transition:background .1s"
                   data-search="${n.nf} ${(n.cliente||'').toLowerCase()} ${(n.municipio||'').toLowerCase()}"
                   onclick="this.querySelector('input').click()"
@@ -1554,7 +1671,7 @@ function renderMontagem() {
                     <input type="checkbox" class="mc-nf-checkbox" value="${n.nf}" data-romaneio="${n.romaneioId}"
                       style="width:15px;height:15px;accent-color:var(--blue);cursor:pointer" onchange="mcCalcPreview()">
                   </td>
-                  <td class="mono" style="padding:8px 4px;font-weight:700;color:var(--navy);font-size:12px;white-space:nowrap">${n.nf}${rTag}</td>
+                  <td class="mono" style="padding:8px 4px;font-weight:700;color:var(--navy);font-size:12px;white-space:nowrap">${n.nf}${rTag}${agendTag}</td>
                   <td style="padding:8px 8px 8px 4px;font-size:12px;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${n.cliente||'—'}</td>
                   <td style="padding:8px 4px;font-size:12px;color:var(--slate);white-space:nowrap">${n.municipio||'—'}</td>
                   <td style="padding:8px 4px;font-size:12px;color:var(--text-muted);white-space:nowrap">${n.uf||'SP'}</td>
@@ -1704,6 +1821,112 @@ function renderDespesasPendentes(){
   pendentes.forEach(({carga:c,despesa:d})=>{const mot=getMotorista(c.motoristaId);const nfL=d.vinculo==='carga'?'Carga inteira':'NF '+d.vinculo.replace('nf_','');h+='<div class="carga-section" style="margin-bottom:10px"><div class="carga-header" style="cursor:default"><span>💰</span><div style="flex:1"><strong>'+d.motivo+'</strong><div style="font-size:11px;color:var(--text-muted)">'+c.data+' · '+(mot?.nome||'—')+' · '+nfL+' · Enviado por '+d.criadoPor+'</div>'+(d.obs?'<div style="font-size:11px;color:var(--text-muted)">'+d.obs+'</div>':'')+'</div><div style="display:flex;gap:10px;align-items:center"><span class="info-pill" style="font-size:13px;font-weight:700">'+fmt(d.valor)+'</span><button class="btn btn-success btn-sm" data-cid="'+c.id+'" data-did="'+d.id+'" onclick="aprovarDespesa(this.dataset.cid,this.dataset.did)">✅ Aprovar</button><button class="btn btn-danger btn-sm" data-cid="'+c.id+'" data-did="'+d.id+'" onclick="rejeitarDespesa(this.dataset.cid,this.dataset.did)">❌ Rejeitar</button></div></div></div>';});
   h+='</div>';return h;
 }
+
+function modalAgendamento(cargaId) {
+  const c = getCarga(cargaId);
+  if (!c) return;
+  // List NFs in this carga for selection
+  const nfOptions = c.nfs.map(n => {
+    const agend = (c.agendamentos||[]).find(a => a.nf === n.nf);
+    const tag = agend ? ` <span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700">📅 ${agend.data} ${agend.hora}</span>` : '';
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;cursor:pointer;border:1px solid #e2e8f0;margin-bottom:4px;background:#fafafa"
+      onmouseover="this.style.background='#eff6ff'" onmouseout="this.style.background='#fafafa'">
+      <input type="checkbox" class="ag-nf-cb" value="${n.nf}" style="width:14px;height:14px;accent-color:var(--blue)" ${agend?'checked':''}>
+      <span class="mono" style="font-weight:700;color:var(--navy)">${n.nf}</span>
+      <span style="font-size:11px;color:var(--slate);flex:1">${n.cliente||'—'}</span>
+      ${tag}
+    </label>`;
+  }).join('');
+
+  // Today's date as default
+  const hoje = new Date().toISOString().split('T')[0];
+
+  showModal(`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+          <span class="modal-title">📅 Agendamento de Entrega</span>
+          <button class="close-btn" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+            Carga <strong>${c.numero ? '#'+c.numero : ''}</strong> · ${c.data||'—'}
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+            <div>
+              <label class="form-label">Data do Agendamento *</label>
+              <input type="date" id="ag-data" class="form-control" value="${hoje}" min="${hoje}">
+            </div>
+            <div>
+              <label class="form-label">Horário *</label>
+              <input type="time" id="ag-hora" class="form-control" value="08:00">
+            </div>
+          </div>
+
+          <div style="margin-bottom:16px">
+            <label class="form-label">Observação (opcional)</label>
+            <textarea id="ag-obs" class="form-control" rows="2" placeholder="Ex: Entregar na doca 3, solicitar agendamento prévio..."></textarea>
+          </div>
+
+          <div>
+            <label class="form-label">Selecione as NFs para agendar</label>
+            <div style="max-height:200px;overflow-y:auto;padding-right:2px">
+              ${nfOptions}
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+          <button class="btn btn-primary" onclick="salvarAgendamento('${cargaId}')">📅 Salvar Agendamento</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function salvarAgendamento(cargaId) {
+  const data  = document.getElementById('ag-data')?.value;
+  const hora  = document.getElementById('ag-hora')?.value;
+  const obs   = document.getElementById('ag-obs')?.value?.trim();
+  const selecionadas = [...document.querySelectorAll('.ag-nf-cb:checked')].map(cb => parseInt(cb.value));
+
+  if (!data) { alert('Informe a data do agendamento.'); return; }
+  if (!hora) { alert('Informe o horário.'); return; }
+  if (!selecionadas.length) { alert('Selecione ao menos uma NF.'); return; }
+
+  const c = getCarga(cargaId);
+  if (!c) return;
+  if (!c.agendamentos) c.agendamentos = [];
+
+  const dataFmt = new Date(data + 'T12:00:00').toLocaleDateString('pt-BR');
+
+  selecionadas.forEach(nfNum => {
+    // Remove existing agendamento for this NF if any
+    c.agendamentos = c.agendamentos.filter(a => a.nf !== nfNum);
+    c.agendamentos.push({
+      nf: nfNum,
+      data: dataFmt,
+      dataISO: data,
+      hora,
+      obs: obs || '',
+      lancadoPor: currentUser.nome,
+      lancadoEm: Date.now()
+    });
+    // Also flag on the NF object inside carga
+    const nfObj = c.nfs.find(n => n.nf === nfNum);
+    if (nfObj) {
+      nfObj.agendado = true;
+      nfObj.agendData = dataFmt;
+      nfObj.agendHora = hora;
+    }
+  });
+
+  save();
+  closeModal();
+  navigate(currentView);
+}
+
 function modalNovaDespesa(cargaId){
   const c=getCarga(cargaId);const mot=getMotorista(c.motoristaId);
   showModal(`<div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal" style="max-width:520px"><div class="modal-header"><span class="modal-title">➕ Nova Despesa · ${c.data} · ${mot?.nome||'—'}</span><button class="close-btn" onclick="closeModal()">×</button></div><div class="modal-body"><div class="alert alert-info" style="margin-bottom:16px">Despesas ficam pendentes até aprovação do Master.</div><div class="form-grid" style="gap:14px"><div class="form-group"><label class="form-label">Motivo <span style="color:var(--red)">*</span></label><select class="form-control" id="dMotivo" onchange="toggleOutros()"><option value="">Selecione...</option><option value="Pedágio">Pedágio</option><option value="Descarga">Descarga</option><option value="Pernoite">Pernoite</option><option value="Outros">Outros</option></select></div><div class="form-group" id="outrosGroup" style="display:none"><label class="form-label">Justificativa <span style="color:var(--red)">*</span></label><input class="form-control" id="dJustificativa" placeholder="Descreva..."></div><div class="form-group"><label class="form-label">Valor (R$) <span style="color:var(--red)">*</span></label><input class="form-control" id="dValor" type="number" step="0.01" placeholder="0,00"></div><div class="form-group"><label class="form-label">Vinculado a</label><select class="form-control" id="dVinculo"><option value="carga">Carga inteira</option>${c.nfs.map(n=>`<option value="nf_${n.nf}">NF ${n.nf} — ${n.cliente.slice(0,35)}</option>`).join('')}</select></div><div class="form-group"><label class="form-label">Observação</label><input class="form-control" id="dObs" placeholder="Informação adicional..."></div></div></div><div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="salvarDespesa('${cargaId}')">Enviar para Aprovação</button></div></div></div>`);
@@ -1830,6 +2053,17 @@ function modalVerCarga(id) {
               </tbody>
             </table>
           </div>
+          ${(c.agendamentos||[]).length>0 ? `
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);margin-bottom:8px">📅 Agendamentos</div>
+            ${(c.agendamentos||[]).sort((a,b)=>a.dataISO>b.dataISO?1:-1).map(a=>`
+              <div style="font-size:12px;padding:6px 10px;border-bottom:1px solid #f1f5f9;display:flex;gap:12px;align-items:center;background:#f8faff;border-radius:6px;margin-bottom:4px">
+                <span class="mono" style="background:#dbeafe;color:#1d4ed8;padding:2px 7px;border-radius:4px;font-weight:700;font-size:11px">NF ${a.nf}</span>
+                <span style="font-weight:600;color:var(--navy)">${a.data} às ${a.hora}</span>
+                ${a.obs ? '<span style="color:var(--slate);font-size:11px">' + a.obs + '</span>' : ''}
+                <span style="color:var(--text-muted);margin-left:auto;font-size:10px">${a.lancadoPor}</span>
+              </div>`).join('')}
+          </div>` : ''}
           ${(c.historicoReentregas||[]).length>0 ? `
           <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
             <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);margin-bottom:8px">↩ Histórico de Reentregas</div>
@@ -2508,6 +2742,12 @@ function renderNotasFiscais() {
     const clF = pctF > 10 ? 'pct-high' : pctF > 6 ? 'pct-mid' : 'pct-ok';
     const clC = pctC > 10 ? 'pct-high' : pctC > 6 ? 'pct-mid' : 'pct-ok';
     const rTag = n.reentrega ? '<span style="background:#fef3c7;color:#92400e;padding:1px 4px;border-radius:3px;font-size:8px;font-weight:700;margin-left:3px">R</span>' : '';
+    // Agendamento — read from romaneio NF (source of truth)
+    const romNF = getRomaneioNF(n.nf);
+    const agend = romNF?.nf?.agendamento || null;
+    const agendTag = agend
+      ? '<span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;margin-left:3px" title="' + agend.hora + (agend.obs ? ' — ' + agend.obs : '') + '">📅 ' + agend.data + '</span>'
+      : '';
     const cargaCell = n.cargaNumero
       ? `<span class="mono" style="background:#e8f0ff;color:var(--navy);padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700">#${n.cargaNumero}</span>`
       : `<span style="font-size:11px;color:var(--text-muted)">—</span>`;
@@ -2517,8 +2757,11 @@ function renderNotasFiscais() {
          <td class="text-right mono fw-600">${custo > 0 ? fmt(custo) : '—'}</td>
          <td class="text-right mono fw-600 ${clC}">${custo > 0 ? fmtN(pctC) + '%' : '—'}</td>`
       : '';
+    const agendBtn = canEdit()
+      ? '<button class="btn btn-secondary btn-sm" style="padding:2px 7px;font-size:10px;white-space:nowrap" onclick="modalAgendamentoNF(' + n.nf + ')">' + (agend ? '📅 Editar' : '📅') + '</button>'
+      : (agend ? agendTag : '');
     return `<tr>
-      <td class="mono" style="font-weight:700;color:var(--navy)">${n.nf}${rTag}</td>
+      <td class="mono" style="font-weight:700;color:var(--navy)">${n.nf}${rTag}${agendTag}</td>
       <td style="font-size:12px">${n.cliente || '—'}</td>
       <td style="font-size:12px;color:var(--slate)">${n.municipio || '—'}/${n.uf || ''}</td>
       <td>${cargaCell}</td>
@@ -2528,6 +2771,7 @@ function renderNotasFiscais() {
       <td class="text-right mono">${frete > 0 ? fmt(fkg) : '—'}</td>
       <td class="text-right mono ${clF}">${frete > 0 ? fmtN(pctF) + '%' : '—'}</td>
       ${masterCols}
+      <td style="white-space:nowrap">${agendBtn}</td>
     </tr>`;
   }).join('');
 
@@ -2569,6 +2813,7 @@ function renderNotasFiscais() {
             <th class="text-right">Frete/kg</th>
             <th class="text-right">% F/F</th>
             ${masterTh}
+            <th></th>
           </tr></thead>
           <tbody>
             ${rows || `<tr><td colspan="${isMaster ? 13 : 9}" class="empty-state"><p>Nenhuma NF encontrada.</p></td></tr>`}
